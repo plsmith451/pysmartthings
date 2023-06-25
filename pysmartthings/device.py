@@ -2,17 +2,47 @@
 from collections import defaultdict, namedtuple
 import colorsys
 import re
-from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
+from enum import Enum
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+
+from dataclasses import dataclass
 
 from .api import Api
 from .capability import ATTRIBUTE_OFF_VALUES, ATTRIBUTE_ON_VALUES, Attribute, Capability
 from .entity import Entity
 
-DEVICE_TYPE_OCF = "OCF"
-DEVICE_TYPE_DTH = "DTH"
-DEVICE_TYPE_UNKNOWN = "UNKNOWN"
-DEVICE_TYPE_ENDPOINT_APP = "ENDPOINT_APP"
-DEVICE_TYPE_VIPER = "VIPER"
+class DeviceType(Enum):
+    BLE = 'BLE'
+    BLE_D2D = 'BLE_D2D'
+    DTH = 'DTH'
+    EDGE_CHILD = 'EDGE_CHILD'
+    ENDPOINT_APP = 'ENDPOINT_APP'
+    GROUP = 'GROUP'
+    HUB = 'HUB'
+    IR = 'IR'
+    IR_OCF = 'IR_OCF'
+    LAN = 'LAN'
+    MATTER = 'MATTER'
+    MOBILE = 'MOBILE'
+    MQTT = 'MQTT'
+    OCF = 'OCF'
+    PENGYOU = 'PENGYOU'
+    SHF = 'SHF'
+    UNKNOWN = None
+    VIDEO = 'VIDEO'
+    VIPER = 'VIPER'
+    VIRTUAL = 'VIRTUAL'
+    WATCH = 'WATCH'
+    ZIGBEE = 'ZIGBEE'
+    ZWAVE = 'ZWAVE'
+
+    @classmethod
+    def from_api(cls, value: Optional[str] = None) -> 'DeviceType':
+        normalized_value = value.upper() if isinstance(value, str) else value
+        try:
+            return cls(normalized_value)
+        except ValueError:
+            return cls.UNKNOWN
 
 COLOR_HEX_MATCHER = re.compile("^#[A-Fa-f0-9]{6}$")
 Status = namedtuple("status", "value unit data")
@@ -85,9 +115,101 @@ class Command:
     channel_up = "channelUp"
     channel_down = "channelDown"
 
+@dataclass
+class DthDeviceDetail:
+    device_type_id: str
+    device_type: str
+    network_type: str
+
+    def __init__(self, data: Dict[str, Optional[str]]):
+        self.device_type_id = data.get('deviceTypeId', '')
+        self.device_type = data.get('deviceTypeName', '')
+        self.network_type = data.get('deviceNetworkType', '')
+
+@dataclass
+class MatterDeviceDetail:
+    hardware_version: Optional[str]
+    product_id: Optional[str]
+    software_version: Optional[str]
+    unique_id: Optional[str]
+    vendor_id: Optional[str]
+
+    def __init__(self, data: Dict[str, Optional[str]]):
+        self.product_id = data.get('productId', None)
+        self.unique_id = data.get('uniqueId', None)
+        self.vendor_id = data.get('vendorId', None)
+        self.hardware_version = data.get('version', {}).get('hardwareLabel', None)
+        self.software_version = data.get('version', {}).get('softwareLabel', None)
+
+@dataclass
+class OcfDeviceDetail:
+    device_type: Optional[str]
+    firmware_version: Optional[str]
+    hardware_version: Optional[str]
+    last_signup_time: Optional[str]
+    locale: Optional[str]
+    manufacturer_name: Optional[str]
+    model_number: Optional[str]
+    name: Optional[str]
+    platform_os: Optional[str]
+    platform_version: Optional[str]
+    spec_version: Optional[str]
+    vendor_id: Optional[str]
+    vendor_resource_client_server_version: Optional[str]
+    vertical_domain_spec_version: Optional[str]
+
+    def __init__(self, data: Dict[str, Optional[str]]):
+        self.device_type = data.get('ocfDeviceType', None)
+        self.firmware_version = data.get('firmwareVersion', None)
+        self.hardware_version = data.get('hwVersion', None)
+        self.last_signup_time = data.get('lastSignupTime', None)
+        self.locale = data.get('locale', None)
+        self.manufacturer_name = data.get('manufacturerName	', None)
+        self.model_number = data.get('modelNumber', None)
+        self.name = data.get('name', None)
+        self.platform_os = data.get('platformVersion', None)
+        self.platform_version = data.get('platformOS', None)
+        self.spec_version = data.get('specVersion', None)
+        self.vendor_id = data.get('vendorId', None)
+        self.vendor_resource_client_server_version = data.get('vendorResourceClientServerVersion', None)
+        self.vertical_domain_spec_version = data.get('verticalDomainSpecVersion', None)
+    
+    @property
+    def model(self) -> Optional[str]:
+        if self.model:
+            return self.model.split('|')[0]
+        return None
 
 class Device:
     """Represents a SmartThings device."""
+    dth: Optional[DthDeviceDetail]
+    driver_id: Optional[str]
+    is_executing_locally: Optional[bool]
+    manufacturer: Optional[str]
+    matter: Optional[MatterDeviceDetail]
+    network_id: Optional[str]
+    ocf: Optional[OcfDeviceDetail]
+
+    def _get_manufacturer_name(self, data: Dict[str, Optional[str]]) -> Optional[str]:
+        code = data.get('deviceManufacturerCode', None)
+        name = data.get('manufacturerName', None)
+        mn = data.get('mnmn', None)
+        
+        value = None
+        if name not in ['SmartThings', 'SmartThingsCommunity']:
+            value = name
+        if not value and mn not in ['SmartThings', 'SmartThingsCommunity']:
+            value = mn
+        if not value and code not in ['SmartThings', 'SmartThingsCommunity']:
+            value = code
+        
+        if self._type == DeviceType.HUB:
+            value = name
+        return value or 'Unavailable'
+
+    def _get_model(self, data: Dict[str, Optional[str]]) -> Optional[str]:
+        device_model = data.get('deviceModel', None)
+        
 
     def __init__(self):
         """Initialize a new device."""
@@ -96,12 +218,16 @@ class Device:
         self._label = None
         self._location_id = None
         self._room_id = None
-        self._type = DEVICE_TYPE_UNKNOWN
-        self._device_type_id = None
-        self._device_type_name = None
-        self._device_type_network = None
-        self._components = {}
-        self._capabilities = []
+        self._type = DeviceType.UNKNOWN
+        self._components: Dict[str, List[str]] = defaultdict(list)
+        self._capabilities: List[str] = []
+        self.driver_id = None
+        self.network_id = None
+        self.is_executing_locally = None
+        self.dth = None
+        self.matter = None
+        self.ocf = None
+        self.manufacturer = None
 
     def apply_data(self, data: dict):
         """Apply the given data dictionary."""
@@ -110,26 +236,37 @@ class Device:
         self._label = data.get("label")
         self._location_id = data.get("locationId")
         self._room_id = data.get("roomId")
-        self._type = data.get("type")
+        self._type = DeviceType.from_api(data.get("type"))
         self._components.clear()
         self._capabilities.clear()
 
-        components = data.get("components")
-        if components:
+        if 'components' in data and isinstance(data['components'], list):
+            components: List[dict] = data['components']
             for component in components:
-                capabilities = [c["id"] for c in component["capabilities"]]
-                component_id = component["id"]
-                if component_id == "main":
+                capabilities: List[str] = [c['id'] for c in component['capabilities']]
+                component_id = str(component.get('id', ''))
+                if component_id == 'main':
                     self._capabilities.extend(capabilities)
                 else:
                     self._components[component_id] = capabilities
 
-        if self._type == DEVICE_TYPE_DTH:
-            dth = data.get("dth")
-            if dth:
-                self._device_type_id = dth.get("deviceTypeId")
-                self._device_type_name = dth.get("deviceTypeName")
-                self._device_type_network = dth.get("deviceNetworkType")
+        device_data: Dict[str, Optional[str]] = {}
+        if self._type == DeviceType.DTH:
+            self.dth = DthDeviceDetail(data=data.get('dth'))
+            device_data = data.get('dth')
+        elif self._type == DeviceType.OCF:
+            self.ocf = OcfDeviceDetail(data=data.get('ocf'))
+            device_data = data.get('dth')
+        elif self._type == DeviceType.MATTER:
+            self.matter = MatterDeviceDetail(data=data.get('matter'))
+            device_data = data.get('dth')
+
+        if device_data:
+            self.driver_id = device_data.get('driverId', None)
+            self.is_executing_locally = device_data.get('executingLocally', False)
+            self.network_id = device_data.get('networkId', None)
+        
+        self.manufacturer = self._get_manufacturer_name(data=data)
 
     def get_capability(self, *capabilities) -> Optional[str]:
         """Return the first capability held by the device."""
@@ -164,32 +301,17 @@ class Device:
         return self._room_id
 
     @property
-    def type(self) -> str:
+    def type(self) -> DeviceType:
         """Get the SmartThings device type."""
         return self._type
 
     @property
-    def device_type_id(self) -> str:
-        """Get the SmartThings device type handler id."""
-        return self._device_type_id
-
-    @property
-    def device_type_name(self) -> str:
-        """Get the SmartThings device type handler name."""
-        return self._device_type_name
-
-    @property
-    def device_type_network(self) -> str:
-        """Get the SmartThings device type handler network."""
-        return self._device_type_network
-
-    @property
-    def components(self) -> Dict[str, Sequence[str]]:
+    def components(self) -> Dict[str, List[str]]:
         """Get the components of the device."""
         return self._components
 
     @property
-    def capabilities(self) -> Sequence[str]:
+    def capabilities(self) -> List[str]:
         """Get a unique list of all capabilities across components."""
         return self._capabilities
 
@@ -815,6 +937,11 @@ class DeviceEntity(Entity, Device):
 
     async def refresh(self):
         """Refresh the device information using the API."""
+        if 'refresh' in self.capabilities:
+            await self._api.post_device_command(
+                device_id=self.device_id, component_id='main',
+                capability='refresh', command='refresh'
+            )
         data = await self._api.get_device(self._device_id)
         if data:
             self.apply_data(data)

@@ -1,13 +1,13 @@
 """Utility for invoking the SmartThings Cloud API."""
 
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Tuple, List, Union
 
 from aiohttp import BasicAuth, ClientSession
 
 from .errors import APIInvalidGrant, APIResponseError
 
 API_OAUTH_TOKEN = "https://auth-global.api.smartthings.com/oauth/token"
-API_BASE = "https://api.smartthings.com/v1/"
+API_BASE = "https://api.smartthings.com/"
 API_LOCATIONS = "locations"
 API_LOCATION = API_LOCATIONS + "/{location_id}"
 API_ROOMS = "locations/{location_id}/rooms"
@@ -27,6 +27,11 @@ API_SUBSCRIPTIONS = API_INSTALLEDAPP + "/subscriptions"
 API_SUBSCRIPTION = API_SUBSCRIPTIONS + "/{subscription_id}"
 API_SCENES = "scenes"
 API_SCENE_EXECUTE = "scenes/{scene_id}/execute"
+
+DEFAULT_HEADERS = {
+    'Content-Type': 'application/json;charset=utf-8',
+    'Accept': 'application/vnd.smartthings+json;v=20170916'
+}
 
 
 class Api:
@@ -104,7 +109,7 @@ class Api:
             API_ROOM.format(location_id=location_id, room_id=room_id)
         )
 
-    async def get_devices(self, params: Optional = None) -> dict:
+    async def get_devices(self, params: Optional[List[Tuple[str, Union[str, bool]]]]) -> dict:
         """
         Get the device definitions.
 
@@ -349,13 +354,14 @@ class Api:
     async def request(
         self, method: str, url: str, params: dict = None, data: dict = None
     ):
+        
         """Perform a request against the specified parameters."""
         async with self._session.request(
             method,
             url,
             params=params,
             json=data,
-            headers={"Authorization": "Bearer " + self._token},
+            headers={**DEFAULT_HEADERS, **{"Authorization": "Bearer " + self._token}},
         ) as resp:
             if resp.status == 200:
                 return await resp.json()

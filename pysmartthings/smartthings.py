@@ -1,6 +1,6 @@
 """Define the SmartThings Cloud API."""
 
-from typing import List, Optional, Sequence
+from typing import List, Optional, Sequence, Literal, Tuple, Union
 
 from aiohttp import ClientSession
 
@@ -74,13 +74,16 @@ class SmartThings:
         *,
         location_ids: Optional[Sequence[str]] = None,
         capabilities: Optional[Sequence[str]] = None,
-        device_ids: Optional[Sequence[str]] = None
+        device_ids: Optional[Sequence[str]] = None,
+        capability_mode: Literal['and', 'or'] = 'and',
+        include_restricted: bool = False
     ) -> List:
         """Retrieve SmartThings devices."""
-        params = []
+        params: List[Tuple[str, Union[str, bool]]] = [('includeRestricted', include_restricted)]
         if location_ids:
             params.extend([("locationId", lid) for lid in location_ids])
         if capabilities:
+            params.append(('capabilitiesMode', capability_mode))
             params.extend([("capability", cap) for cap in capabilities])
         if device_ids:
             params.extend([("deviceId", did) for did in device_ids])
